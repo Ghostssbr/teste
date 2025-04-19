@@ -3,50 +3,61 @@ const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Servir arquivos estáticos
+// Middleware para servir arquivos estáticos
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Rota para /:id/animes
 app.get('/:id/animes', (req, res) => {
-    const animeData = generateAnimeData(req.params.id);
-    res.json(animeData);
+    try {
+        const animeData = generateAnimeData(req.params.id);
+        res.json(animeData);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
 });
 
-// Rota fallback para o frontend
+// Rota fallback
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-function generateAnimeData(number) {
+// Função para gerar dados de anime
+function generateAnimeData(id) {
     const animeTitles = [
         "Attack on Titan", "Demon Slayer", "Jujutsu Kaisen",
         "My Hero Academia", "One Piece", "Naruto",
         "Death Note", "Fullmetal Alchemist: Brotherhood",
         "Hunter x Hunter", "Steins;Gate"
     ];
-    
-    const count = number % 5 + 1;
+
+    // Convertendo o ID para string para manipulação segura
+    const idStr = id.toString();
+    const count = parseInt(idStr.charAt(idStr.length - 1)) || 1;
     const animes = [];
-    
-    for (let i = 0; i < count; i++) {
-        const randomIndex = (number.toString().charCodeAt(i % number.toString().length) + i) % animeTitles.length;
+
+    for (let i = 0; i < Math.min(count, 5); i++) {
+        const charCode = idStr.charCodeAt(i % idStr.length);
+        const randomIndex = charCode % animeTitles.length;
+        
         animes.push({
             id: i + 1,
             title: animeTitles[randomIndex],
-            year: 2010 + (number.toString().charCodeAt(i % number.toString().length) % 15,
-            episodes: 12 + (number.toString().charCodeAt(i % number.toString().length) % 50),
-            rating: (3 + (number.toString().charCodeAt(i % number.toString().length) % 20) / 10).toFixed(1)
+            year: 2010 + (charCode % 15),
+            episodes: 12 + (charCode % 50),
+            rating: (3 + (charCode % 20) / 10).toFixed(1)
         });
     }
-    
+
     return {
-        requestId: number,
+        requestId: id,
         timestamp: new Date().toISOString(),
         animes: animes,
-        message: `Você solicitou dados de animes com o ID ${number}`
+        message: `Você solicitou dados de animes com o ID ${id}`
     };
 }
 
+// Iniciar o servidor
 app.listen(port, () => {
-    console.log(`Servidor rodando em http://localhost:${port}`);
+    console.log(`Servidor rodando na porta ${port}`);
 });
