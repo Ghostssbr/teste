@@ -1,1 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime JSON Generator</title>
+    <style>
+        /* (Mantido igual ao anterior) */
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Anime JSON Generator</h1>
+        
+        <div class="info">
+            <p>Para receber um JSON de animes, acesse uma URL no formato:</p>
+            <code>/#/qualquer-numero/animes</code>
+            <p>Por exemplo: <a href="/#/123/animes" id="example-link">/#/123/animes</a></p>
+        </div>
 
+        <div id="json-display" style="display: none;">
+            <h2>Resultado:</h2>
+            <pre id="json-output"></pre>
+        </div>
+
+        <div class="try-it">
+            <p>Ou tente aqui mesmo:</p>
+            <button id="try-button">Gerar JSON Aleatório</button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            checkUrl();
+            
+            document.getElementById('example-link').addEventListener('click', function(e) {
+                e.preventDefault();
+                window.location.hash = '/123/animes';
+            });
+            
+            document.getElementById('try-button').addEventListener('click', function() {
+                const randomNum = Math.floor(Math.random() * 1000);
+                window.location.hash = `/${randomNum}/animes`;
+            });
+            
+            window.addEventListener('hashchange', checkUrl);
+        });
+        
+        function checkUrl() {
+            const hash = window.location.hash.substring(1); // Remove o #
+            const match = hash.match(/\/(\d+)\/animes/);
+            
+            const jsonDisplay = document.getElementById('json-display');
+            const jsonOutput = document.getElementById('json-output');
+            
+            if (match) {
+                const number = match[1];
+                const animeData = generateAnimeData(number);
+                
+                jsonOutput.textContent = JSON.stringify(animeData, null, 2);
+                jsonDisplay.style.display = 'block';
+            } else {
+                jsonDisplay.style.display = 'none';
+            }
+        }
+        
+        function generateAnimeData(number) {
+            const animeTitles = [
+                "Attack on Titan", "Demon Slayer", "Jujutsu Kaisen",
+                "My Hero Academia", "One Piece", "Naruto",
+                "Death Note", "Fullmetal Alchemist: Brotherhood",
+                "Hunter x Hunter", "Steins;Gate"
+            ];
+            
+            const count = number % 5 + 1;
+            const animes = [];
+            
+            for (let i = 0; i < count; i++) {
+                const randomIndex = (number.charCodeAt(i % number.length) + i) % animeTitles.length;
+                animes.push({
+                    id: i + 1,
+                    title: animeTitles[randomIndex],
+                    year: 2010 + (number.charCodeAt(i % number.length) % 15,
+                    episodes: 12 + (number.charCodeAt(i % number.length) % 50,
+                    rating: (3 + (number.charCodeAt(i % number.length) % 20) / 10).toFixed(1)
+                });
+            }
+            
+            return {
+                requestId: number,
+                timestamp: new Date().toISOString(),
+                animes: animes,
+                message: `Você solicitou dados de animes com o ID ${number}`
+            };
+        }
+    </script>
+</body>
+</html>
