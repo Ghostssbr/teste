@@ -29,13 +29,13 @@ function generateAnimeData(number) {
     const animes = [];
     
     for (let i = 0; i < count; i++) {
-        const randomIndex = (number.charCodeAt(i % number.length) + i) % animeTitles.length;
+        const randomIndex = (number.toString().charCodeAt(i % number.toString().length) + i) % animeTitles.length;
         animes.push({
             id: i + 1,
             title: animeTitles[randomIndex],
-            year: 2010 + (number.charCodeAt(i % number.length) % 15,
-            episodes: 12 + (number.charCodeAt(i % number.length) % 50),
-            rating: (3 + (number.charCodeAt(i % number.length) % 20) / 10).toFixed(1)
+            year: 2010 + (number.toString().charCodeAt(i % number.toString().length) % 15,
+            episodes: 12 + (number.toString().charCodeAt(i % number.toString().length) % 50),
+            rating: (3 + (number.toString().charCodeAt(i % number.toString().length) % 20) / 10).toFixed(1)
         });
     }
     
