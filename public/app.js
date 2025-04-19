@@ -50,58 +50,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         localStorage.setItem('shadowGateProjects4', JSON.stringify(projects));
     }
 
-    // Função para registrar Service Worker com retry
-    async function registerServiceWorkerWithRetry() {
-        if (!('serviceWorker' in navigator)) return;
-
-        // Espera 10 segundos antes de começar a tentar registrar
-        await new Promise(resolve => setTimeout(resolve, 10000));
-
-        const maxAttempts = 10;
-        const retryDelay = 5000; // 5 segundos entre tentativas
-        let attempts = 0;
-
-        const tryRegister = async () => {
-            attempts++;
-            try {
-                const registration = await navigator.serviceWorker.register('/sw.js', {
-                    scope: '/'
-                });
-
-                showAlert('Service Worker registrado com sucesso', 'success');
-
-                navigator.serviceWorker.addEventListener('message', event => {
-                    if (event.data.type === 'GET_PROJECTS') {
-                        event.ports[0].postMessage(getProjects());
-                    }
-                });
-
-                registration.addEventListener('updatefound', () => {
-                    const newWorker = registration.installing;
-                    newWorker.addEventListener('statechange', () => {
-                        if (newWorker.state === 'activated') {
-                            showAlert('Nova versão disponível! Atualizando...', 'info');
-                            setTimeout(() => window.location.reload(), 1500);
-                        }
-                    });
-                });
-                
-                return true; // Sucesso
-            } catch (error) {
-                if (attempts < maxAttempts) {
-                    showAlert(`Tentativa ${attempts}/${maxAttempts}: Falha ao registrar Service Worker. Tentando novamente em ${retryDelay/1000} segundos...`, 'warning');
-                    await new Promise(resolve => setTimeout(resolve, retryDelay));
-                    return tryRegister();
-                } else {
-                    showAlert(`Falha ao registrar Service Worker após ${maxAttempts} tentativas: ${error.message}`, 'danger');
-                    return false;
-                }
-            }
-        };
-
-        return tryRegister();
-    }
-
     // Inicialização
     async function initialize() {
         updateDailyCounters();
@@ -114,9 +62,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         } catch (error) {
             showAlert('Erro ao conectar com o banco de dados', 'danger');
         }
-
-        // Registrar Service Worker com retry
-        registerServiceWorkerWithRetry();
 
         loadProjects();
         setupForm();
