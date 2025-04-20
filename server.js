@@ -2,7 +2,6 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -19,12 +18,6 @@ const XTREAM_CONFIG = {
   username: '474912714',
   password: '355591139'
 };
-
-// Ensure default icon exists
-const defaultIconPath = path.join(__dirname, 'public', 'default-icon.jpg');
-if (!fs.existsSync(defaultIconPath)) {
-  fs.writeFileSync(defaultIconPath, fs.readFileSync(path.join(__dirname, 'public', 'default-icon-sample.jpg')));
-}
 
 // Middleware
 app.use(express.json());
@@ -127,45 +120,24 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
     }
 });
 
-// Icon Endpoint (Robust Version)
+// Icon Endpoint (Simplified Version)
 app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
     try {
-        const streamId = req.params.streamId;
-        const iconExtensions = ['.jpg', '.png', ''];
-        const basePaths = [
-            `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/movie/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}`,
-            `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/images/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}`
-        ];
-
-        let iconFound = false;
+        // Simple SVG icon as fallback
+        const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+            <rect width="100" height="100" fill="#ddd"/>
+            <text x="50" y="50" font-family="Arial" font-size="20" text-anchor="middle" fill="#666">Icon</text>
+        </svg>`;
         
-        // Try multiple URL combinations
-        for (const basePath of basePaths) {
-            for (const ext of iconExtensions) {
-                const iconUrl = `${basePath}/${streamId}${ext}`;
-                try {
-                    const iconResponse = await fetch(iconUrl);
-                    if (iconResponse.ok) {
-                        res.set({
-                            'Content-Type': iconResponse.headers.get('content-type') || 'image/jpeg',
-                            'Cache-Control': 'public, max-age=86400'
-                        });
-                        iconResponse.body.pipe(res);
-                        iconFound = true;
-                        return;
-                    }
-                } catch (e) {
-                    console.log(`Tried ${iconUrl} - not found`);
-                }
-            }
-        }
-
-        // If no icon found, return default
-        res.sendFile(defaultIconPath);
-
+        res.set({
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'public, max-age=86400'
+        });
+        
+        res.send(svgIcon);
     } catch (err) {
         console.error('Icon handling error:', err);
-        res.sendFile(defaultIconPath);
+        res.status(500).send('Icon error');
     }
 });
 
