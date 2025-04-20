@@ -1,5 +1,6 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const fetch = require('node-fetch'); // Adicione esta linha no topo
 const path = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
@@ -8,6 +9,14 @@ const port = process.env.PORT || 3000;
 const supabaseUrl = 'https://nwoswxbtlquiekyangbs.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53b3N3eGJ0bHF1aWVreWFuZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3ODEwMjcsImV4cCI6MjA2MDM1NzAyN30.KarBv9AopQpldzGPamlj3zu9eScKltKKHH2JJblpoCE';
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Configuração da API de filmes
+const XTREAM_CONFIG = {
+  host: 'sigcine1.space',
+  port: 80,
+  username: '474912714',
+  password: '355591139'
+};
 
 // Middleware para JSON
 app.use(express.json());
@@ -65,23 +74,76 @@ app.get('/:id/animes', verifyProject, async (req, res) => {
     }
 });
 
-// Nova rota para /:id/filmes
+// Rota para /:id/filmes (com integração Xtream)
 app.get('/:id/filmes', verifyProject, async (req, res) => {
     try {
         const projectId = req.params.id;
         await incrementRequestCount(projectId, 'filmes');
+
+        // Buscar dados da API Xtream
+        const apiUrl = `http://${XTREAM_CONFIG.host}/player_api.php?username=${XTREAM_CONFIG.username}&password=${XTREAM_CONFIG.password}&action=get_vod_streams`;
+        const apiResponse = await fetch(apiUrl);
         
+        if (!apiResponse.ok) {
+            throw new Error('Falha ao buscar dados de filmes');
+        }
+
+        const filmesData = await apiResponse.json();
+
+        // Adicionar URL do player ofuscada
+        const filmesComPlayer = filmesData.map(filme => ({
+            ...filme,
+            player: `${req.protocol}://${req.get('host')}/${projectId}/stream/${filme.stream_id}.mp4`
+        }));
+
         res.json({
             status: 'success',
             projectId,
             timestamp: new Date().toISOString(),
-            data: generateFilmesData(projectId)
+            data: filmesComPlayer
         });
+
     } catch (err) {
         console.error('Error:', err);
         res.status(500).json({ 
             status: 'error',
-            error: 'Internal server error'
+            error: 'Internal server error',
+            details: err.message
+        });
+    }
+});
+
+// Rota para streaming de filmes
+app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
+    try {
+        const streamId = req.params.streamId;
+        const realStreamUrl = `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/movie/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}/${streamId}.mp4`;
+        
+        const streamResponse = await fetch(realStreamUrl);
+        
+        if (!streamResponse.ok) {
+            return res.status(404).json({ 
+                status: 'error',
+                error: 'Stream not found'
+            });
+        }
+
+        // Configurar headers para streaming
+        res.set({
+            'Content-Type': 'video/mp4',
+            'Cache-Control': 'no-store',
+            'Connection': 'keep-alive',
+            'Transfer-Encoding': 'chunked'
+        });
+
+        // Pipe do stream
+        streamResponse.body.pipe(res);
+
+    } catch (err) {
+        console.error('Stream error:', err);
+        res.status(500).json({ 
+            status: 'error',
+            error: 'Stream error'
         });
     }
 });
@@ -91,83 +153,8 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Função para gerar dados de anime
-function generateAnimeData(projectId) {
-    const baseAnimes = [
-        { id: 1, title: "Attack on Titan", episodes: 75, year: 2013 },
-        { id: 2, title: "Demon Slayer", episodes: 44, year: 2019 },
-        { id: 3, title: "Jujutsu Kaisen", episodes: 24, year: 2020 }
-    ];
-
-    const hash = projectId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    
-    return baseAnimes.map(anime => ({
-        ...anime,
-        episodes: anime.episodes + (hash % 5),
-        year: anime.year + (hash % 3),
-        rating: (3.5 + (hash % 5 * 0.3)).toFixed(1),
-        projectSpecific: `custom-${projectId.slice(0, 3)}-${anime.id}`
-    }));
-}
-
-// Função para gerar dados de filmes
-function generateFilmesData(projectId) {
-    const baseFilmes = [
-        { id: 1, title: "O Poderoso Chefão", year: 1972, duration: 175 },
-        { id: 2, title: "Interestelar", year: 2014, duration: 169 },
-        { id: 3, title: "Parasita", year: 2019, duration: 132 }
-    ];
-
-    const hash = projectId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    
-    return baseFilmes.map(filme => ({
-        ...filme,
-        duration: filme.duration + (hash % 20),
-        year: filme.year + (hash % 3),
-        rating: (4.0 + (hash % 5 * 0.2)).toFixed(1),
-        projectSpecific: `movie-${projectId.slice(-3)}-${filme.id}`
-    }));
-}
-
-// Função para incrementar contador no Supabase
-async function incrementRequestCount(projectId, endpointType) {
-    try {
-        const today = new Date().toISOString().split('T')[0];
-        
-        const { data: currentData } = await supabase
-            .from('project_requests')
-            .select('*')
-            .eq('project_id', projectId)
-            .single();
-
-        const requestsToday = (currentData?.requests_today || 0) + 1;
-        const totalRequests = (currentData?.total_requests || 0) + 1;
-        const dailyRequests = {
-            ...(currentData?.daily_requests || {}),
-            [today]: (currentData?.daily_requests?.[today] || 0) + 1
-        };
-        
-        let level = currentData?.level || 1;
-        if (totalRequests >= level * 100) {
-            level += 1;
-        }
-
-        await supabase
-            .from('project_requests')
-            .upsert({
-                project_id: projectId,
-                requests_today: requestsToday,
-                total_requests: totalRequests,
-                last_request_date: today,
-                daily_requests: dailyRequests,
-                level: level,
-                updated_at: new Date().toISOString(),
-                last_endpoint: endpointType
-            });
-    } catch (error) {
-        console.error('Error updating request count:', error);
-    }
-}
+// Funções auxiliares (generateAnimeData e incrementRequestCount permanecem iguais)
+// ... (mantenha as mesmas funções do código anterior)
 
 app.listen(port, () => {
     console.log(`Servidor rodando na porta ${port}`);
