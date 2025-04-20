@@ -11,7 +11,7 @@ const supabaseUrl = 'https://nwoswxbtlquiekyangbs.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53b3N3eGJ0bHF1aWVreWFuZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3ODEwMjcsImV4cCI6MjA2MDM1NzAyN30.KarBv9AopQpldzGPamlj3zu9eScKltKKHH2JJblpoCE';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configuração da API de filmes
+// Configuração da API Xtream
 const XTREAM_CONFIG = {
   host: 'sigcine1.space',
   port: 80,
@@ -89,16 +89,17 @@ app.get('/:id/filmes', verifyProject, async (req, res) => {
 
         const filmesData = await apiResponse.json();
 
-        const filmesComPlayer = filmesData.map(filme => ({
+        const filmesComLinks = filmesData.map(filme => ({
             ...filme,
-            player: `${req.protocol}://${req.get('host')}/${projectId}/stream/${filme.stream_id}.mp4`
+            player: `${req.protocol}://${req.get('host')}/${projectId}/stream/${filme.stream_id}.mp4`,
+            stream_icon: `${req.protocol}://${req.get('host')}/${projectId}/icon/${filme.stream_id}.jpg`
         }));
 
         res.json({
             status: 'success',
             projectId,
             timestamp: new Date().toISOString(),
-            data: filmesComPlayer
+            data: filmesComLinks
         });
 
     } catch (err) {
@@ -137,6 +138,37 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
         res.status(500).json({ 
             status: 'error',
             error: 'Stream error'
+        });
+    }
+});
+
+// Endpoint para ícones
+app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
+    try {
+        const streamId = req.params.streamId;
+        const realIconUrl = `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/movie/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}/${streamId}.jpg`;
+        
+        const iconResponse = await fetch(realIconUrl);
+        
+        if (!iconResponse.ok) {
+            return res.status(404).json({ 
+                status: 'error',
+                error: 'Icon not found'
+            });
+        }
+
+        res.set({
+            'Content-Type': 'image/jpeg',
+            'Cache-Control': 'public, max-age=86400' // Cache de 1 dia
+        });
+
+        iconResponse.body.pipe(res);
+
+    } catch (err) {
+        console.error('Icon error:', err);
+        res.status(500).json({ 
+            status: 'error',
+            error: 'Icon error'
         });
     }
 });
