@@ -120,7 +120,7 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
     }
 });
 
-// Icon Endpoint (Simplified Version)
+// Icon Endpoint
 app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
     try {
         // Simple SVG icon as fallback
