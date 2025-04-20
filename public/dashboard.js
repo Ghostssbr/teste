@@ -1,3 +1,4 @@
+// dashboard.js completo atualizado
 document.addEventListener('DOMContentLoaded', function() {
     const REQUEST_LIMIT_PER_DAY = 1000;
     
@@ -18,7 +19,6 @@ document.addEventListener('DOMContentLoaded', function() {
     function getProjectIdFromUrl() {
         const params = new URLSearchParams(window.location.search);
         const projectId = params.get('project');
-        console.log('ID do projeto da URL:', projectId); // Debug
         return projectId;
     }
 
@@ -31,8 +31,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const projects = getProjects();
         const project = projects.find(p => p.id === projectId);
-        
-        console.log('Projeto encontrado:', project); // Debug
         return project;
     }
 
@@ -40,15 +38,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const project = loadProject(projectId);
     
     if (!project) {
-        console.error('Projeto não encontrado, redirecionando...');
         showAlert('Projeto não encontrado! Redirecionando...', 'danger');
         setTimeout(() => window.location.href = 'home.html', 2000);
         return;
     }
 
+    // Inicializa dailyRequests se não existir
+    if (!project.dailyRequests) {
+        project.dailyRequests = {};
+        saveProject(project);
+    }
+
     // Atualizar UI
     updateProjectUI(project);
-    initUsageChart(project);
     setupTabs();
     setupCopyButtons();
     setupTimeframeButtons();
@@ -63,19 +65,26 @@ document.addEventListener('DOMContentLoaded', function() {
         if (event.data.type === 'UPDATE_PROJECTS') {
             const updatedProject = event.data.payload.find(p => p.id === projectId);
             if (updatedProject) {
-                console.log('Atualização recebida:', updatedProject);
                 updateProjectUI(updatedProject);
             }
         }
     });
 
-    function updateProjectUI(project) {
-        if (!project) {
-            console.error('Nenhum projeto fornecido para atualizar UI');
-            return;
+    // Função para salvar projeto
+    function saveProject(project) {
+        const projects = getProjects();
+        const index = projects.findIndex(p => p.id === project.id);
+        if (index >= 0) {
+            projects[index] = project;
+        } else {
+            projects.push(project);
         }
+        localStorage.setItem('shadowGateProjects4', JSON.stringify(projects));
+    }
 
-        console.log('Atualizando UI com:', project); // Debug
+    // Atualizar UI do projeto
+    function updateProjectUI(project) {
+        if (!project) return;
 
         // Informações básicas
         document.querySelectorAll('#snippetProjectId, #snippetProjectId2').forEach(el => {
@@ -87,20 +96,190 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('gateCreated').textContent = project.createdAt ? formatDate(project.createdAt) : 'Data desconhecida';
         document.getElementById('apiEndpoint').textContent = `${window.location.origin}/api/${project.id || 'N/A'}`;
         document.getElementById('spreadsheetUrl').textContent = project.url || 'Sem URL';
-        document.getElementById('dailyRequests').textContent = project.requestsToday || 0;
         document.getElementById('gateLevel').textContent = project.level || 1;
 
-        // Barra de progresso
+        // Atualizações dos sistemas
+        updateDailyRequests(project);
         updateLevelProgress(project);
-        
-        // Status
         updateGateStatus(project);
-        
-        // Endpoint /animes
+        initOrUpdateChart(project);
         updateAnimeEndpoint(project);
+    }
+
+    // Sistema de requests diários
+    function updateDailyRequests(project) {
+        const today = new Date().toISOString().split('T')[0];
+        const requestsToday = project.dailyRequests[today] || 0;
         
-        // Estatísticas
-        updateRequestStats(project);
+        // Atualiza o contador
+        document.getElementById('dailyRequests').textContent = requestsToday;
+        
+        // Atualiza a barra de progresso
+        const progressPercentage = Math.min(100, (requestsToday / REQUEST_LIMIT_PER_DAY) * 100);
+        const progressBar = document.querySelector('.gate-card:nth-child(2) .h-1.bg-blue-500');
+        if (progressBar) {
+            progressBar.style.width = `${progressPercentage}%`;
+            
+            // Muda para vermelho se atingir o limite
+            if (requestsToday >= REQUEST_LIMIT_PER_DAY) {
+                progressBar.classList.replace('bg-blue-500', 'bg-red-500');
+            } else {
+                progressBar.classList.replace('bg-red-500', 'bg-blue-500');
+            }
+        }
+    }
+
+    // Sistema de gráfico
+    function generateChartData(project, days = 7) {
+        const dailyRequests = project.dailyRequests || {};
+        const dates = [];
+        
+        // Gera os dias solicitados
+        for (let i = days - 1; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(date.getDate() - i);
+            dates.push(date.toISOString().split('T')[0]);
+        }
+        
+        return {
+            labels: dates.map(date => {
+                const d = new Date(date);
+                return `${d.getDate()}/${d.getMonth() + 1}`;
+            }),
+            datasets: [{
+                label: 'Requests',
+                data: dates.map(date => dailyRequests[date] || 0),
+                backgroundColor: 'rgba(58, 107, 255, 0.2)',
+                borderColor: 'rgba(58, 107, 255, 1)',
+                borderWidth: 2,
+                tension: 0.4,
+                fill: true
+            }]
+        };
+    }
+
+    function initOrUpdateChart(project) {
+        const ctx = document.getElementById('usageChart').getContext('2d');
+        const chartData = generateChartData(project);
+        
+        if (window.usageChart) {
+            window.usageChart.data.labels = chartData.labels;
+            window.usageChart.data.datasets[0].data = chartData.datasets[0].data;
+            window.usageChart.update();
+        } else {
+            window.usageChart = new Chart(ctx, {
+                type: 'line',
+                data: chartData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1E293B',
+                            titleColor: '#E2E8F0',
+                            bodyColor: '#CBD5E1',
+                            borderColor: '#334155',
+                            borderWidth: 1,
+                            padding: 12,
+                            usePointStyle: true
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                            ticks: { color: '#94a3b8' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    function updateChartTimeframe(days) {
+        const project = loadProject(projectId);
+        if (!project) return;
+        
+        if (window.usageChart) {
+            const chartData = generateChartData(project, days);
+            window.usageChart.data.labels = chartData.labels;
+            window.usageChart.data.datasets[0].data = chartData.datasets[0].data;
+            window.usageChart.update();
+        }
+    }
+
+    // Função para simular request (para teste)
+    function simulateRequest() {
+        const project = loadProject(projectId);
+        if (!project) return;
+        
+        const today = new Date().toISOString().split('T')[0];
+        
+        // Inicializa dailyRequests se não existir
+        if (!project.dailyRequests) {
+            project.dailyRequests = {};
+        }
+        
+        // Atualiza os contadores
+        project.requestsToday = (project.requestsToday || 0) + 1;
+        project.totalRequests = (project.totalRequests || 0) + 1;
+        project.dailyRequests[today] = (project.dailyRequests[today] || 0) + 1;
+        
+        // Verifica level up
+        const currentLevel = project.level || 1;
+        if (project.totalRequests >= currentLevel * 100) {
+            project.level = currentLevel + 1;
+            showAlert(`Gate leveled up to level ${currentLevel + 1}!`, 'success');
+        }
+        
+        // Salva e atualiza a UI
+        saveProject(project);
+        updateProjectUI(project);
+    }
+
+    // Configurar botões de timeframe
+    function setupTimeframeButtons() {
+        document.querySelectorAll('.timeframe-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.timeframe-btn').forEach(b => {
+                    b.classList.remove('active', 'text-white');
+                    b.classList.add('text-gray-400');
+                });
+                this.classList.add('active', 'text-white');
+                this.classList.remove('text-gray-400');
+                
+                updateChartTimeframe(parseInt(this.getAttribute('data-days')));
+            });
+        });
+    }
+
+    // Funções auxiliares existentes (mantidas iguais)
+    function updateLevelProgress(project) {
+        const currentLevel = project.level || 1;
+        const requestsNeeded = currentLevel * 100;
+        const progress = ((project.totalRequests || 0) % 100) / 100 * 100;
+        
+        document.getElementById('levelProgressBar').style.width = `${progress}%`;
+        document.getElementById('requestsToNextLevel').textContent = 
+            Math.max(0, requestsNeeded - (project.totalRequests || 0));
+    }
+
+    function updateGateStatus(project) {
+        const statusElement = document.getElementById('gateStatus');
+        const status = project.status || 'active';
+        
+        if (status === 'active') {
+            statusElement.innerHTML = '<i class="bi bi-check-circle-fill mr-2"></i> ACTIVE';
+            statusElement.className = 'text-xl font-bold text-green-400 flex items-center';
+        } else {
+            statusElement.innerHTML = '<i class="bi bi-exclamation-circle-fill mr-2"></i> INACTIVE';
+            statusElement.className = 'text-xl font-bold text-yellow-400 flex items-center';
+        }
     }
 
     function updateAnimeEndpoint(project) {
@@ -126,93 +305,6 @@ document.addEventListener('DOMContentLoaded', function() {
             </div>
             <p class="text-xs text-gray-500 mt-2">Access this URL for anime data in JSON format</p>
         `;
-    }
-
-    function updateRequestStats(project) {
-        const today = new Date().toISOString().split('T')[0];
-        const requestsToday = project.requestsToday || 0;
-        const dailyPercentage = Math.min(100, (requestsToday / REQUEST_LIMIT_PER_DAY) * 100);
-        
-        // Atualizar contadores
-        document.getElementById('dailyRequests').textContent = requestsToday;
-        document.querySelector('.gate-card:nth-child(2) .h-1.bg-blue-500').style.width = `${dailyPercentage}%`;
-        
-        // Atualizar card de estatísticas
-        let statsCard = document.querySelector('.request-stats-card');
-        if (!statsCard) {
-            statsCard = document.createElement('div');
-            statsCard.className = 'gate-card p-4 request-stats-card';
-            document.querySelector('.grid.grid-cols-1.md\\:grid-cols-3.gap-4.mb-6').appendChild(statsCard);
-        }
-        
-        statsCard.innerHTML = `
-            <h3 class="text-xs font-medium text-gray-400 mb-1 tracking-wider">REQUEST STATISTICS</h3>
-            <div class="mt-2 space-y-2">
-                <div class="flex justify-between items-center">
-                    <span class="text-xs text-gray-400">Today:</span>
-                    <span class="text-xs font-medium ${requestsToday >= REQUEST_LIMIT_PER_DAY ? 'text-red-400' : 'text-green-400'}">
-                        ${requestsToday}/${REQUEST_LIMIT_PER_DAY}
-                    </span>
-                </div>
-                <div class="h-1 bg-gray-700 rounded-full">
-                    <div class="h-1 ${requestsToday >= REQUEST_LIMIT_PER_DAY ? 'bg-red-500' : 'bg-green-500'} rounded-full" 
-                         style="width: ${dailyPercentage}%"></div>
-                </div>
-                <div class="flex justify-between items-center mt-1">
-                    <span class="text-xs text-gray-400">Total:</span>
-                    <span class="text-xs font-medium text-blue-400">${project.totalRequests || 0}</span>
-                </div>
-            </div>
-        `;
-    }
-
-    function updateLevelProgress(project) {
-        const currentLevel = project.level || 1;
-        const requestsNeeded = currentLevel * 100;
-        const progress = ((project.totalRequests || 0) % 100) / 100 * 100;
-        
-        document.getElementById('levelProgressBar').style.width = `${progress}%`;
-        document.getElementById('requestsToNextLevel').textContent = 
-            Math.max(0, requestsNeeded - (project.totalRequests || 0));
-    }
-
-    function updateGateStatus(project) {
-        const statusElement = document.getElementById('gateStatus');
-        const status = project.status || 'active';
-        
-        if (status === 'active') {
-            statusElement.innerHTML = '<i class="bi bi-check-circle-fill mr-2"></i> ACTIVE';
-            statusElement.className = 'text-xl font-bold text-green-400 flex items-center';
-        } else {
-            statusElement.innerHTML = '<i class="bi bi-exclamation-circle-fill mr-2"></i> INACTIVE';
-            statusElement.className = 'text-xl font-bold text-yellow-400 flex items-center';
-        }
-    }
-
-    function initUsageChart(project) {
-        const ctx = document.getElementById('usageChart').getContext('2d');
-        const activityData = project.activityData || {
-            '7d': Array.from({length: 7}, () => Math.floor(Math.random() * 50) + 10),
-            '30d': Array.from({length: 30}, () => Math.floor(Math.random() * 100) + 20),
-            '90d': Array.from({length: 90}, () => Math.floor(Math.random() * 150) + 30)
-        };
-        
-        window.currentChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: Array.from({length: 7}, (_, i) => `Day ${i+1}`),
-                datasets: [{
-                    label: 'Requests',
-                    data: activityData['7d'],
-                    backgroundColor: 'rgba(58, 107, 255, 0.2)',
-                    borderColor: 'rgba(58, 107, 255, 1)',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    fill: true
-                }]
-            },
-            options: getChartOptions()
-        });
     }
 
     function setupTabs() {
@@ -254,56 +346,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function setupTimeframeButtons() {
-        document.querySelectorAll('.timeframe-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.timeframe-btn').forEach(b => {
-                    b.classList.remove('active', 'text-white');
-                    b.classList.add('text-gray-400');
-                });
-                this.classList.add('active', 'text-white');
-                this.classList.remove('text-gray-400');
-                
-                updateChart(this.getAttribute('data-days'));
-            });
-        });
-    }
-
-    function updateChart(days) {
-        const project = loadProject(projectId);
-        const activityData = project?.activityData || {
-            '7d': Array.from({length: 7}, () => Math.floor(Math.random() * 50) + 10),
-            '30d': Array.from({length: 30}, () => Math.floor(Math.random() * 100) + 20),
-            '90d': Array.from({length: 90}, () => Math.floor(Math.random() * 150) + 30)
-        };
-        
-        const chart = window.currentChart;
-        const daysKey = days + 'd';
-        
-        chart.data.labels = Array.from({length: days}, (_, i) => `Day ${i+1}`);
-        chart.data.datasets[0].data = activityData[daysKey] || Array.from({length: days}, () => Math.floor(Math.random() * 100) + 20);
-        chart.update();
-    }
-
-    function simulateRequest() {
-        const projects = getProjects();
-        const projectIndex = projects.findIndex(p => p.id === projectId);
-        
-        if (projectIndex >= 0) {
-            projects[projectIndex].requestsToday = (projects[projectIndex].requestsToday || 0) + 1;
-            projects[projectIndex].totalRequests = (projects[projectIndex].totalRequests || 0) + 1;
-            
-            const currentLevel = projects[projectIndex].level || 1;
-            if (projects[projectIndex].totalRequests >= currentLevel * 100) {
-                projects[projectIndex].level = currentLevel + 1;
-                showAlert(`Gate leveled up to level ${currentLevel + 1}!`, 'success');
-            }
-            
-            localStorage.setItem('shadowGateProjects4', JSON.stringify(projects));
-            updateProjectUI(projects[projectIndex]);
-        }
-    }
-
     function formatDate(dateString) {
         try {
             const options = { year: 'numeric', month: 'short', day: 'numeric' };
@@ -312,36 +354,6 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Erro ao formatar data:', e);
             return 'Data inválida';
         }
-    }
-
-    function getChartOptions() {
-        return {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: '#1E293B',
-                    titleColor: '#E2E8F0',
-                    bodyColor: '#CBD5E1',
-                    borderColor: '#334155',
-                    borderWidth: 1,
-                    padding: 12,
-                    usePointStyle: true
-                }
-            },
-            scales: {
-                x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                    ticks: { color: '#94a3b8' }
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                    ticks: { color: '#94a3b8' }
-                }
-            }
-        };
     }
 
     function showAlert(message, type) {
@@ -360,4 +372,7 @@ document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => alert.remove(), 500);
         }, 3000);
     }
+
+    // Expor simulateRequest para o HTML
+    window.simulateRequest = simulateRequest;
 });
