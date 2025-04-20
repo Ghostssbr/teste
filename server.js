@@ -6,12 +6,12 @@ const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Supabase Configuration
+// Configuração do Supabase
 const supabaseUrl = 'https://nwoswxbtlquiekyangbs.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53b3N3eGJ0bHF1aWVreWFuZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3ODEwMjcsImV4cCI6MjA2MDM1NzAyN30.KarBv9AopQpldzGPamlj3zu9eScKltKKHH2JJblpoCE';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Xtream API Configuration
+// Configuração Xtream API
 const XTREAM_CONFIG = {
   host: 'sigcine1.space',
   port: 80,
@@ -19,100 +19,47 @@ const XTREAM_CONFIG = {
   password: '355591139'
 };
 
-// Middleware
+// Middlewares
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Sistema de Detecção de Requisições
-const requestDetection = {
-  monitoredPaths: ['/animes', '/filmes'],
-  suspiciousThreshold: 10,
-  timeframeMinutes: 1,
-  requestLog: new Map(),
-  blockedIPs: new Set(),
-  
-  checkRequest: function(req) {
-    const path = req.path.toLowerCase();
-    const clientIp = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-    const now = Date.now();
-    
-    if (this.blockedIPs.has(clientIp)) {
-      return { blocked: true, reason: "IP bloqueado" };
-    }
-    
-    if (this.monitoredPaths.some(p => path.includes(p))) {
-      if (!this.requestLog.has(clientIp)) {
-        this.requestLog.set(clientIp, []);
-      }
-      
-      const requests = this.requestLog.get(clientIp);
-      requests.push(now);
-      
-      const cutoff = now - (this.timeframeMinutes * 60 * 1000);
-      const recentRequests = requests.filter(t => t > cutoff);
-      this.requestLog.set(clientIp, recentRequests);
-      
-      if (recentRequests.length > this.suspiciousThreshold) {
-        this.blockedIPs.add(clientIp);
-        return { blocked: true, reason: "Muitas requisições em curto período" };
-      }
-      
-      return { monitored: true, count: recentRequests.length };
-    }
-    
-    return { monitored: false };
-  },
-  
-  cleanup: function() {
-    const now = Date.now();
-    const cutoff = now - (this.timeframeMinutes * 60 * 1000);
-    
-    for (const [ip, requests] of this.requestLog.entries()) {
-      const recentRequests = requests.filter(t => t > cutoff);
-      if (recentRequests.length === 0) {
-        this.requestLog.delete(ip);
-      } else {
-        this.requestLog.set(ip, recentRequests);
-      }
-    }
-  }
-};
-
-setInterval(() => requestDetection.cleanup(), 60000);
-
-// Middleware de Detecção
+// Middleware CORS para Sketchware
 app.use((req, res, next) => {
-  const detectionResult = requestDetection.checkRequest(req);
-  
-  if (detectionResult.blocked) {
-    console.warn(`[BLOCKED] IP ${req.ip} blocked: ${detectionResult.reason}`);
-    return res.status(429).json({ 
-      status: 'error',
-      error: 'Muitas requisições. Tente novamente mais tarde.'
-    });
-  }
-  
-  if (detectionResult.monitored) {
-    console.log(`[MONITORED] Request to ${req.path} from ${req.ip} (${detectionResult.count} requests)`);
-    
-    supabase.from('request_logs').insert({
-      ip_address: req.ip,
-      path: req.path,
-      timestamp: new Date().toISOString(),
-      user_agent: req.headers['user-agent']
-    }).then(({ error }) => {
-      if (error) console.error('Log error:', error);
-    });
-  }
-  
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   next();
 });
 
-// Project Verification Middleware
+// Sistema de Monitoramento de Requisições
+const requestTracker = {
+  requests: new Map(),
+  
+  track: function(projectId, endpoint) {
+    const now = Date.now();
+    const key = `${projectId}_${endpoint}`;
+    
+    if (!this.requests.has(key)) {
+      this.requests.set(key, []);
+    }
+    
+    this.requests.get(key).push(now);
+    console.log(`[TRACK] ${key} - ${now}`);
+  },
+  
+  getCount: function(projectId, endpoint) {
+    const key = `${projectId}_${endpoint}`;
+    return this.requests.has(key) ? this.requests.get(key).length : 0;
+  }
+};
+
+// Middleware de Verificação de Projeto
 async function verifyProject(req, res, next) {
   const projectId = req.params.id;
   
   try {
+    console.log(`[VERIFY] Verifying project: ${projectId}`);
+    
     const { data: project, error } = await supabase
       .from('project_tokens')
       .select('*')
@@ -120,6 +67,7 @@ async function verifyProject(req, res, next) {
       .single();
 
     if (error || !project) {
+      console.error('[VERIFY ERROR] Project not found:', projectId);
       return res.status(404).json({ 
         status: 'error',
         error: 'Project not found'
@@ -129,7 +77,7 @@ async function verifyProject(req, res, next) {
     req.project = project;
     next();
   } catch (err) {
-    console.error('Project verification error:', err);
+    console.error('[VERIFY ERROR]', err);
     res.status(500).json({ 
       status: 'error',
       error: 'Internal server error'
@@ -137,11 +85,82 @@ async function verifyProject(req, res, next) {
   }
 }
 
-// Movies Endpoint
+// Função para Incrementar Contagem
+async function incrementRequestCount(projectId, endpointType) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    console.log(`[INCREMENT] Starting for ${projectId}`);
+
+    // 1. Busca ou cria registro
+    const { data: currentData, error: fetchError } = await supabase
+      .from('project_requests')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+
+    // Registro não existe - cria novo
+    if (fetchError || !currentData) {
+      console.log('[INCREMENT] Creating new record');
+      const { error: createError } = await supabase
+        .from('project_requests')
+        .insert({
+          project_id: projectId,
+          requests_today: 1,
+          total_requests: 1,
+          last_request_date: today,
+          daily_requests: { [today]: 1 },
+          level: 1,
+          last_endpoint: endpointType
+        });
+      
+      if (createError) throw createError;
+      return { status: 'created' };
+    }
+
+    // 2. Atualiza contadores
+    const updateData = {
+      requests_today: currentData.requests_today + 1,
+      total_requests: currentData.total_requests + 1,
+      last_request_date: today,
+      daily_requests: { ...currentData.daily_requests },
+      updated_at: new Date().toISOString(),
+      last_endpoint: endpointType
+    };
+
+    // Atualiza contador diário
+    updateData.daily_requests[today] = (updateData.daily_requests[today] || 0) + 1;
+
+    // 3. Atualiza nível
+    if (updateData.total_requests >= (currentData.level * 100)) {
+      updateData.level = currentData.level + 1;
+    }
+
+    // 4. Executa update
+    const { error: updateError } = await supabase
+      .from('project_requests')
+      .update(updateData)
+      .eq('project_id', projectId);
+
+    if (updateError) throw updateError;
+    
+    console.log(`[INCREMENT] Success for ${projectId}`);
+    return { status: 'updated' };
+    
+  } catch (error) {
+    console.error('[INCREMENT ERROR]', error);
+    throw error;
+  }
+}
+
+// Endpoint de Filmes
 app.get('/:id/filmes', verifyProject, async (req, res) => {
   try {
     const projectId = req.params.id;
+    console.log(`[FILMES] Request from ${projectId}`);
+
+    // Contabiliza requisição
     await incrementRequestCount(projectId, 'filmes');
+    requestTracker.track(projectId, 'filmes');
 
     const apiUrl = `http://${XTREAM_CONFIG.host}/player_api.php?username=${XTREAM_CONFIG.username}&password=${XTREAM_CONFIG.password}&action=get_vod_streams`;
     const apiResponse = await fetch(apiUrl);
@@ -162,19 +181,77 @@ app.get('/:id/filmes', verifyProject, async (req, res) => {
       status: 'success',
       projectId,
       timestamp: new Date().toISOString(),
+      requestCount: requestTracker.getCount(projectId, 'filmes'),
       data: filmesComLinks
     });
 
   } catch (err) {
-    console.error('Movies endpoint error:', err);
+    console.error('[FILMES ERROR]', err);
     res.status(500).json({ 
       status: 'error',
-      error: 'Internal server error'
+      error: 'Internal server error',
+      details: err.message
     });
   }
 });
 
-// Stream Endpoint
+// Endpoint de Animes
+app.get('/:id/animes', verifyProject, async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    console.log(`[ANIMES] Request from ${projectId}`);
+
+    // Contabiliza requisição
+    const incrementResult = await incrementRequestCount(projectId, 'animes');
+    requestTracker.track(projectId, 'animes');
+
+    // Verificação adicional
+    const { data: projectData } = await supabase
+      .from('project_requests')
+      .select('*')
+      .eq('project_id', projectId)
+      .single();
+
+    res.json({
+      status: 'success',
+      projectId,
+      timestamp: new Date().toISOString(),
+      incrementResult,
+      requestCount: requestTracker.getCount(projectId, 'animes'),
+      dbData: projectData,
+      data: generateAnimeData(projectId)
+    });
+
+  } catch (err) {
+    console.error('[ANIMES ERROR]', err);
+    res.status(500).json({ 
+      status: 'error',
+      error: 'Internal server error',
+      details: err.message
+    });
+  }
+});
+
+// Gerador de Dados de Animes
+function generateAnimeData(projectId) {
+  const baseAnimes = [
+    { id: 1, title: "Attack on Titan", episodes: 75, year: 2013 },
+    { id: 2, title: "Demon Slayer", episodes: 44, year: 2019 },
+    { id: 3, title: "Jujutsu Kaisen", episodes: 24, year: 2020 }
+  ];
+
+  const hash = projectId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  
+  return baseAnimes.map(anime => ({
+    ...anime,
+    episodes: anime.episodes + (hash % 5),
+    year: anime.year + (hash % 3),
+    rating: (3.5 + (hash % 5 * 0.3)).toFixed(1),
+    projectSpecific: `custom-${projectId.slice(0, 3)}-${anime.id}`
+  }));
+}
+
+// Endpoint de Stream
 app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
   try {
     const streamId = req.params.streamId;
@@ -197,7 +274,7 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
     streamResponse.body.pipe(res);
 
   } catch (err) {
-    console.error('Stream error:', err);
+    console.error('[STREAM ERROR]', err);
     res.status(500).json({ 
       status: 'error',
       error: 'Stream error'
@@ -205,7 +282,7 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
   }
 });
 
-// Icon Endpoint
+// Endpoint de Ícone
 app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
   try {
     const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
@@ -220,110 +297,39 @@ app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
     
     res.send(svgIcon);
   } catch (err) {
-    console.error('Icon handling error:', err);
+    console.error('[ICON ERROR]', err);
     res.status(500).send('Icon error');
   }
 });
 
-// Anime Endpoint
-app.get('/:id/animes', verifyProject, async (req, res) => {
+// Rota de Teste
+app.get('/test/:id', async (req, res) => {
   try {
-    const projectId = req.params.id;
-    await incrementRequestCount(projectId, 'animes');
-    
+    await incrementRequestCount(req.params.id, 'test');
+    const { data } = await supabase
+      .from('project_requests')
+      .select('*')
+      .eq('project_id', req.params.id)
+      .single();
+      
     res.json({
       status: 'success',
-      projectId,
-      timestamp: new Date().toISOString(),
-      data: generateAnimeData(projectId)
+      data: data || { error: 'No data found' }
     });
   } catch (err) {
-    console.error('Anime endpoint error:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       status: 'error',
-      error: 'Internal server error'
+      error: err.message
     });
   }
 });
 
-// Helper Functions
-function generateAnimeData(projectId) {
-  const baseAnimes = [
-    { id: 1, title: "Attack on Titan", episodes: 75, year: 2013 },
-    { id: 2, title: "Demon Slayer", episodes: 44, year: 2019 },
-    { id: 3, title: "Jujutsu Kaisen", episodes: 24, year: 2020 }
-  ];
-
-  const hash = projectId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  
-  return baseAnimes.map(anime => ({
-    ...anime,
-    episodes: anime.episodes + (hash % 5),
-    year: anime.year + (hash % 3),
-    rating: (3.5 + (hash % 5 * 0.3)).toFixed(1),
-    projectSpecific: `custom-${projectId.slice(0, 3)}-${anime.id}`
-  }));
-}
-
-async function incrementRequestCount(projectId, endpointType) {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Primeiro busca os dados atuais
-    const { data: currentData, error: fetchError } = await supabase
-      .from('project_requests')
-      .select('*')
-      .eq('project_id', projectId)
-      .single();
-
-    if (fetchError && fetchError.code !== 'PGRST116') { // Ignora erro de "nenhum resultado"
-      throw fetchError;
-    }
-
-    // Prepara os dados para atualização
-    const updateData = {
-      project_id: projectId,
-      requests_today: ((currentData?.requests_today) || 0) + 1,
-      total_requests: ((currentData?.total_requests) || 0) + 1,
-      last_request_date: today,
-      daily_requests: { ...currentData?.daily_requests },
-      updated_at: new Date().toISOString(),
-      last_endpoint: endpointType
-    };
-
-    // Atualiza o contador diário
-    if (!updateData.daily_requests[today]) {
-      updateData.daily_requests[today] = 1;
-    } else {
-      updateData.daily_requests[today] += 1;
-    }
-
-    // Verifica e atualiza o nível
-    const currentLevel = currentData?.level || 1;
-    if (updateData.total_requests >= currentLevel * 100) {
-      updateData.level = currentLevel + 1;
-    } else {
-      updateData.level = currentLevel;
-    }
-
-    // Faz o upsert (insert ou update)
-    const { error } = await supabase
-      .from('project_requests')
-      .upsert(updateData);
-
-    if (error) throw error;
-
-  } catch (error) {
-    console.error('Request count error:', error);
-  }
-}
-
-// Frontend Route
+// Rota Frontend
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start Server
+// Inicia Servidor
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
