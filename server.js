@@ -2,16 +2,17 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const fs = require('fs');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Configuração do Supabase
+// Supabase Configuration
 const supabaseUrl = 'https://nwoswxbtlquiekyangbs.supabase.co';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53b3N3eGJ0bHF1aWVreWFuZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3ODEwMjcsImV4cCI6MjA2MDM1NzAyN30.KarBv9AopQpldzGPamlj3zu9eScKltKKHH2JJblpoCE';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Configuração da API Xtream
+// Xtream API Configuration
 const XTREAM_CONFIG = {
   host: 'sigcine1.space',
   port: 80,
@@ -19,11 +20,17 @@ const XTREAM_CONFIG = {
   password: '355591139'
 };
 
+// Ensure default icon exists
+const defaultIconPath = path.join(__dirname, 'public', 'default-icon.jpg');
+if (!fs.existsSync(defaultIconPath)) {
+  fs.writeFileSync(defaultIconPath, fs.readFileSync(path.join(__dirname, 'public', 'default-icon-sample.jpg')));
+}
+
 // Middleware
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware para verificar projeto
+// Project Verification Middleware
 async function verifyProject(req, res, next) {
     const projectId = req.params.id;
     
@@ -37,15 +44,14 @@ async function verifyProject(req, res, next) {
         if (error || !project) {
             return res.status(404).json({ 
                 status: 'error',
-                error: 'Project not found',
-                message: `Project ID ${projectId} not found in database`
+                error: 'Project not found'
             });
         }
 
         req.project = project;
         next();
     } catch (err) {
-        console.error('Error verifying project:', err);
+        console.error('Project verification error:', err);
         res.status(500).json({ 
             status: 'error',
             error: 'Internal server error'
@@ -53,28 +59,7 @@ async function verifyProject(req, res, next) {
     }
 }
 
-// Endpoint /:id/animes
-app.get('/:id/animes', verifyProject, async (req, res) => {
-    try {
-        const projectId = req.params.id;
-        await incrementRequestCount(projectId, 'animes');
-        
-        res.json({
-            status: 'success',
-            projectId,
-            timestamp: new Date().toISOString(),
-            data: generateAnimeData(projectId)
-        });
-    } catch (err) {
-        console.error('Error:', err);
-        res.status(500).json({ 
-            status: 'error',
-            error: 'Internal server error'
-        });
-    }
-});
-
-// Endpoint /:id/filmes
+// Movies Endpoint
 app.get('/:id/filmes', verifyProject, async (req, res) => {
     try {
         const projectId = req.params.id;
@@ -92,7 +77,7 @@ app.get('/:id/filmes', verifyProject, async (req, res) => {
         const filmesComLinks = filmesData.map(filme => ({
             ...filme,
             player: `${req.protocol}://${req.get('host')}/${projectId}/stream/${filme.stream_id}.mp4`,
-            stream_icon: `${req.protocol}://${req.get('host')}/${projectId}/icon/${filme.stream_id}.jpg`
+            stream_icon: `${req.protocol}://${req.get('host')}/${projectId}/icon/${filme.stream_id}`
         }));
 
         res.json({
@@ -103,7 +88,7 @@ app.get('/:id/filmes', verifyProject, async (req, res) => {
         });
 
     } catch (err) {
-        console.error('Error:', err);
+        console.error('Movies endpoint error:', err);
         res.status(500).json({ 
             status: 'error',
             error: 'Internal server error'
@@ -111,7 +96,7 @@ app.get('/:id/filmes', verifyProject, async (req, res) => {
     }
 });
 
-// Endpoint de streaming
+// Stream Endpoint
 app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
     try {
         const streamId = req.params.streamId;
@@ -142,38 +127,70 @@ app.get('/:id/stream/:streamId', verifyProject, async (req, res) => {
     }
 });
 
-// Endpoint para ícones
+// Icon Endpoint (Robust Version)
 app.get('/:id/icon/:streamId', verifyProject, async (req, res) => {
     try {
         const streamId = req.params.streamId;
-        const realIconUrl = `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/movie/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}/${streamId}.jpg`;
+        const iconExtensions = ['.jpg', '.png', ''];
+        const basePaths = [
+            `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/movie/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}`,
+            `http://${XTREAM_CONFIG.host}:${XTREAM_CONFIG.port}/images/${XTREAM_CONFIG.username}/${XTREAM_CONFIG.password}`
+        ];
+
+        let iconFound = false;
         
-        const iconResponse = await fetch(realIconUrl);
-        
-        if (!iconResponse.ok) {
-            return res.status(404).json({ 
-                status: 'error',
-                error: 'Icon not found'
-            });
+        // Try multiple URL combinations
+        for (const basePath of basePaths) {
+            for (const ext of iconExtensions) {
+                const iconUrl = `${basePath}/${streamId}${ext}`;
+                try {
+                    const iconResponse = await fetch(iconUrl);
+                    if (iconResponse.ok) {
+                        res.set({
+                            'Content-Type': iconResponse.headers.get('content-type') || 'image/jpeg',
+                            'Cache-Control': 'public, max-age=86400'
+                        });
+                        iconResponse.body.pipe(res);
+                        iconFound = true;
+                        return;
+                    }
+                } catch (e) {
+                    console.log(`Tried ${iconUrl} - not found`);
+                }
+            }
         }
 
-        res.set({
-            'Content-Type': 'image/jpeg',
-            'Cache-Control': 'public, max-age=86400' // Cache de 1 dia
-        });
-
-        iconResponse.body.pipe(res);
+        // If no icon found, return default
+        res.sendFile(defaultIconPath);
 
     } catch (err) {
-        console.error('Icon error:', err);
+        console.error('Icon handling error:', err);
+        res.sendFile(defaultIconPath);
+    }
+});
+
+// Anime Endpoint
+app.get('/:id/animes', verifyProject, async (req, res) => {
+    try {
+        const projectId = req.params.id;
+        await incrementRequestCount(projectId, 'animes');
+        
+        res.json({
+            status: 'success',
+            projectId,
+            timestamp: new Date().toISOString(),
+            data: generateAnimeData(projectId)
+        });
+    } catch (err) {
+        console.error('Anime endpoint error:', err);
         res.status(500).json({ 
             status: 'error',
-            error: 'Icon error'
+            error: 'Internal server error'
         });
     }
 });
 
-// Funções auxiliares
+// Helper Functions
 function generateAnimeData(projectId) {
     const baseAnimes = [
         { id: 1, title: "Attack on Titan", episodes: 75, year: 2013 },
@@ -218,20 +235,19 @@ async function incrementRequestCount(projectId, endpointType) {
             updateData.level = (currentData?.level || 1) + 1;
         }
 
-        await supabase
-            .from('project_requests')
-            .upsert(updateData);
+        await supabase.from('project_requests').upsert(updateData);
 
     } catch (error) {
-        console.error('Error updating request count:', error);
+        console.error('Request count error:', error);
     }
 }
 
-// Rota padrão para o frontend
+// Frontend Route
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Start Server
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
 });
