@@ -1,65 +1,84 @@
 document.addEventListener('DOMContentLoaded', function() {
     const REQUEST_LIMIT_PER_DAY = 1000;
-    let currentChart = null;
-    let projectId = null;
-    let project = null;
-
-    // Initialize the dashboard
-    initDashboard();
-
-    function initDashboard() {
-        projectId = getProjectIdFromUrl();
-        project = loadProject(projectId);
-        
-        if (!project) {
-            showAlert('Project not found! Redirecting...', 'danger');
-            setTimeout(() => window.location.href = 'home.html', 2000);
-            return;
-        }
-
-        // Initialize UI
-        updateProjectUI(project);
-        initUsageChart(project);
-        setupTabs();
-        setupCopyButtons();
-        setupTimeframeButtons();
-
-        // Setup back button
-        document.getElementById('backButton').addEventListener('click', () => {
-            window.location.href = 'home.html';
-        });
-
-        // Setup simulate request button
-        document.getElementById('simulateRequestBtn').addEventListener('click', simulateRequest);
-    }
-
-    // Helper functions
+    
+    // Função para verificar e corrigir dados
     function getProjects() {
         try {
             const projects = JSON.parse(localStorage.getItem('shadowGateProjects4')) || [];
-            return Array.isArray(projects) ? projects.filter(p => p && p.id) : [];
+            if (!Array.isArray(projects)) throw new Error('Dados inválidos');
+            return projects.filter(p => p && p.id);
         } catch (e) {
-            console.error('Resetting corrupted data...', e);
+            console.error('Corrigindo dados corrompidos...', e);
             localStorage.setItem('shadowGateProjects4', JSON.stringify([]));
             return [];
         }
     }
 
+    // Obter ID do projeto da URL
     function getProjectIdFromUrl() {
         const params = new URLSearchParams(window.location.search);
-        return params.get('project');
+        const projectId = params.get('project');
+        console.log('ID do projeto da URL:', projectId); // Debug
+        return projectId;
     }
 
+    // Carregar projeto específico
     function loadProject(projectId) {
-        if (!projectId) return null;
-        return getProjects().find(p => p.id === projectId);
+        if (!projectId) {
+            console.error('Nenhum ID de projeto fornecido');
+            return null;
+        }
+
+        const projects = getProjects();
+        const project = projects.find(p => p.id === projectId);
+        
+        console.log('Projeto encontrado:', project); // Debug
+        return project;
     }
+
+    const projectId = getProjectIdFromUrl();
+    const project = loadProject(projectId);
+    
+    if (!project) {
+        console.error('Projeto não encontrado, redirecionando...');
+        showAlert('Projeto não encontrado! Redirecionando...', 'danger');
+        setTimeout(() => window.location.href = 'home.html', 2000);
+        return;
+    }
+
+    // Atualizar UI
+    updateProjectUI(project);
+    initUsageChart(project);
+    setupTabs();
+    setupCopyButtons();
+    setupTimeframeButtons();
+
+    // Configurar botão de voltar
+    document.getElementById('backButton').addEventListener('click', function() {
+        window.location.href = 'home.html';
+    });
+
+    // Listener para mensagens do Service Worker
+    navigator.serviceWorker.addEventListener('message', event => {
+        if (event.data.type === 'UPDATE_PROJECTS') {
+            const updatedProject = event.data.payload.find(p => p.id === projectId);
+            if (updatedProject) {
+                console.log('Atualização recebida:', updatedProject);
+                updateProjectUI(updatedProject);
+            }
+        }
+    });
 
     function updateProjectUI(project) {
-        if (!project) return;
+        if (!project) {
+            console.error('Nenhum projeto fornecido para atualizar UI');
+            return;
+        }
 
-        // Basic info
-        document.querySelectorAll('[id^="snippetProjectId"]').forEach(el => {
+        console.log('Atualizando UI com:', project); // Debug
+
+        // Informações básicas
+        document.querySelectorAll('#snippetProjectId, #snippetProjectId2').forEach(el => {
             el.textContent = project.id || 'N/A';
         });
 
@@ -68,54 +87,20 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('gateCreated').textContent = project.createdAt ? formatDate(project.createdAt) : 'Data desconhecida';
         document.getElementById('apiEndpoint').textContent = `${window.location.origin}/api/${project.id || 'N/A'}`;
         document.getElementById('spreadsheetUrl').textContent = project.url || 'Sem URL';
+        document.getElementById('dailyRequests').textContent = project.requestsToday || 0;
         document.getElementById('gateLevel').textContent = project.level || 1;
 
-        // Stats
-        updateRequestStats(project);
+        // Barra de progresso
         updateLevelProgress(project);
+        
+        // Status
         updateGateStatus(project);
+        
+        // Endpoint /animes
         updateAnimeEndpoint(project);
-    }
-
-    function updateRequestStats(project) {
-        const requestsToday = project.requestsToday || 0;
-        const dailyPercentage = Math.min(100, (requestsToday / REQUEST_LIMIT_PER_DAY) * 100);
         
-        document.getElementById('dailyRequests').textContent = requestsToday;
-        document.getElementById('totalRequests').textContent = project.totalRequests || 0;
-        
-        const progressBar = document.querySelector('.requests-progress');
-        progressBar.style.width = `${dailyPercentage}%`;
-        
-        if (dailyPercentage >= 90) {
-            progressBar.className = 'requests-progress bg-red-500 h-1 rounded-full';
-        } else if (dailyPercentage >= 70) {
-            progressBar.className = 'requests-progress bg-yellow-500 h-1 rounded-full';
-        } else {
-            progressBar.className = 'requests-progress bg-green-500 h-1 rounded-full';
-        }
-    }
-
-    function updateLevelProgress(project) {
-        const currentLevel = project.level || 1;
-        const requestsInLevel = (project.totalRequests || 0) % 100;
-        const progress = (requestsInLevel / 100) * 100;
-        
-        document.getElementById('levelProgressBar').style.width = `${progress}%`;
-        document.getElementById('requestsToNextLevel').textContent = 100 - requestsInLevel;
-    }
-
-    function updateGateStatus(project) {
-        const statusElement = document.getElementById('gateStatus');
-        const status = project.status || 'active';
-        
-        if (status === 'active') {
-            statusElement.innerHTML = '<i class="bi bi-check-circle-fill mr-2"></i> ACTIVE';
-            statusElement.className = 'text-xl font-bold text-green-400 flex items-center';
-        } else {
-            statusElement.innerHTML = '<i class="bi bi-exclamation-circle-fill mr-2"></i> INACTIVE';
-            statusElement.className = 'text-xl font-bold text-yellow-400 flex items-center';
-        }
+        // Estatísticas
+        updateRequestStats(project);
     }
 
     function updateAnimeEndpoint(project) {
@@ -143,19 +128,82 @@ document.addEventListener('DOMContentLoaded', function() {
         `;
     }
 
+    function updateRequestStats(project) {
+        const today = new Date().toISOString().split('T')[0];
+        const requestsToday = project.requestsToday || 0;
+        const dailyPercentage = Math.min(100, (requestsToday / REQUEST_LIMIT_PER_DAY) * 100);
+        
+        // Atualizar contadores
+        document.getElementById('dailyRequests').textContent = requestsToday;
+        document.querySelector('.gate-card:nth-child(2) .h-1.bg-blue-500').style.width = `${dailyPercentage}%`;
+        
+        // Atualizar card de estatísticas
+        let statsCard = document.querySelector('.request-stats-card');
+        if (!statsCard) {
+            statsCard = document.createElement('div');
+            statsCard.className = 'gate-card p-4 request-stats-card';
+            document.querySelector('.grid.grid-cols-1.md\\:grid-cols-3.gap-4.mb-6').appendChild(statsCard);
+        }
+        
+        statsCard.innerHTML = `
+            <h3 class="text-xs font-medium text-gray-400 mb-1 tracking-wider">REQUEST STATISTICS</h3>
+            <div class="mt-2 space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs text-gray-400">Today:</span>
+                    <span class="text-xs font-medium ${requestsToday >= REQUEST_LIMIT_PER_DAY ? 'text-red-400' : 'text-green-400'}">
+                        ${requestsToday}/${REQUEST_LIMIT_PER_DAY}
+                    </span>
+                </div>
+                <div class="h-1 bg-gray-700 rounded-full">
+                    <div class="h-1 ${requestsToday >= REQUEST_LIMIT_PER_DAY ? 'bg-red-500' : 'bg-green-500'} rounded-full" 
+                         style="width: ${dailyPercentage}%"></div>
+                </div>
+                <div class="flex justify-between items-center mt-1">
+                    <span class="text-xs text-gray-400">Total:</span>
+                    <span class="text-xs font-medium text-blue-400">${project.totalRequests || 0}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    function updateLevelProgress(project) {
+        const currentLevel = project.level || 1;
+        const requestsNeeded = currentLevel * 100;
+        const progress = ((project.totalRequests || 0) % 100) / 100 * 100;
+        
+        document.getElementById('levelProgressBar').style.width = `${progress}%`;
+        document.getElementById('requestsToNextLevel').textContent = 
+            Math.max(0, requestsNeeded - (project.totalRequests || 0));
+    }
+
+    function updateGateStatus(project) {
+        const statusElement = document.getElementById('gateStatus');
+        const status = project.status || 'active';
+        
+        if (status === 'active') {
+            statusElement.innerHTML = '<i class="bi bi-check-circle-fill mr-2"></i> ACTIVE';
+            statusElement.className = 'text-xl font-bold text-green-400 flex items-center';
+        } else {
+            statusElement.innerHTML = '<i class="bi bi-exclamation-circle-fill mr-2"></i> INACTIVE';
+            statusElement.className = 'text-xl font-bold text-yellow-400 flex items-center';
+        }
+    }
+
     function initUsageChart(project) {
         const ctx = document.getElementById('usageChart').getContext('2d');
-        const activityData = project.activityData || generateDefaultActivityData();
-        const last7Days = getLastNDays(7);
-        const chartData = last7Days.map(day => activityData[day] || 0);
+        const activityData = project.activityData || {
+            '7d': Array.from({length: 7}, () => Math.floor(Math.random() * 50) + 10),
+            '30d': Array.from({length: 30}, () => Math.floor(Math.random() * 100) + 20),
+            '90d': Array.from({length: 90}, () => Math.floor(Math.random() * 150) + 30)
+        };
         
-        currentChart = new Chart(ctx, {
+        window.currentChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: last7Days.map(day => formatChartDate(day)),
+                labels: Array.from({length: 7}, (_, i) => `Day ${i+1}`),
                 datasets: [{
                     label: 'Requests',
-                    data: chartData,
+                    data: activityData['7d'],
                     backgroundColor: 'rgba(58, 107, 255, 0.2)',
                     borderColor: 'rgba(58, 107, 255, 1)',
                     borderWidth: 2,
@@ -192,20 +240,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function setupCopyButtons() {
-        document.addEventListener('click', function(e) {
-            if (e.target.closest('.copy-button') || e.target.closest('.copy-snippet')) {
-                const button = e.target.closest('.copy-button, .copy-snippet');
-                const text = button.previousElementSibling?.textContent || 
-                             button.parentElement.previousElementSibling?.textContent;
-                
+        document.querySelectorAll('.copy-button').forEach(button => {
+            button.addEventListener('click', function() {
+                const text = this.previousElementSibling.textContent;
                 navigator.clipboard.writeText(text).then(() => {
-                    const icon = button.innerHTML;
-                    button.innerHTML = '<i class="bi bi-check2 text-green-400"></i>';
+                    const icon = this.innerHTML;
+                    this.innerHTML = '<i class="bi bi-check2 text-green-400"></i>';
                     setTimeout(() => {
-                        button.innerHTML = icon;
+                        this.innerHTML = icon;
                     }, 2000);
                 });
-            }
+            });
         });
     }
 
@@ -225,13 +270,19 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateChart(days) {
-        const lastNDays = getLastNDays(parseInt(days));
-        const activityData = project.activityData || generateDefaultActivityData();
-        const chartData = lastNDays.map(day => activityData[day] || 0);
+        const project = loadProject(projectId);
+        const activityData = project?.activityData || {
+            '7d': Array.from({length: 7}, () => Math.floor(Math.random() * 50) + 10),
+            '30d': Array.from({length: 30}, () => Math.floor(Math.random() * 100) + 20),
+            '90d': Array.from({length: 90}, () => Math.floor(Math.random() * 150) + 30)
+        };
         
-        currentChart.data.labels = lastNDays.map(day => formatChartDate(day));
-        currentChart.data.datasets[0].data = chartData;
-        currentChart.update();
+        const chart = window.currentChart;
+        const daysKey = days + 'd';
+        
+        chart.data.labels = Array.from({length: days}, (_, i) => `Day ${i+1}`);
+        chart.data.datasets[0].data = activityData[daysKey] || Array.from({length: days}, () => Math.floor(Math.random() * 100) + 20);
+        chart.update();
     }
 
     function simulateRequest() {
@@ -239,58 +290,28 @@ document.addEventListener('DOMContentLoaded', function() {
         const projectIndex = projects.findIndex(p => p.id === projectId);
         
         if (projectIndex >= 0) {
-            const today = new Date().toISOString().split('T')[0];
-            
-            // Update project data
             projects[projectIndex].requestsToday = (projects[projectIndex].requestsToday || 0) + 1;
             projects[projectIndex].totalRequests = (projects[projectIndex].totalRequests || 0) + 1;
             
-            // Initialize activity data if needed
-            projects[projectIndex].activityData = projects[projectIndex].activityData || {};
-            projects[projectIndex].activityData[today] = (projects[projectIndex].activityData[today] || 0) + 1;
-            
-            // Check for level up
             const currentLevel = projects[projectIndex].level || 1;
             if (projects[projectIndex].totalRequests >= currentLevel * 100) {
                 projects[projectIndex].level = currentLevel + 1;
                 showAlert(`Gate leveled up to level ${currentLevel + 1}!`, 'success');
             }
             
-            // Save and update UI
             localStorage.setItem('shadowGateProjects4', JSON.stringify(projects));
-            project = projects[projectIndex];
-            updateProjectUI(project);
-            updateChart('7'); // Refresh chart to show new data
+            updateProjectUI(projects[projectIndex]);
         }
     }
 
-    // Utility functions
-    function getLastNDays(n) {
-        const dates = [];
-        for (let i = n-1; i >= 0; i--) {
-            const date = new Date();
-            date.setDate(date.getDate() - i);
-            dates.push(date.toISOString().split('T')[0]);
+    function formatDate(dateString) {
+        try {
+            const options = { year: 'numeric', month: 'short', day: 'numeric' };
+            return new Date(dateString).toLocaleDateString('en-US', options);
+        } catch (e) {
+            console.error('Erro ao formatar data:', e);
+            return 'Data inválida';
         }
-        return dates;
-    }
-
-    function formatChartDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
-
-    function generateDefaultActivityData() {
-        const data = {};
-        const last90Days = getLastNDays(90);
-        
-        last90Days.forEach((day, index) => {
-            const baseValue = Math.floor(Math.random() * 50) + 10;
-            const trendValue = Math.floor(index * 0.7);
-            data[day] = baseValue + trendValue;
-        });
-        
-        return data;
     }
 
     function getChartOptions() {
@@ -321,16 +342,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
         };
-    }
-
-    function formatDate(dateString) {
-        try {
-            const options = { year: 'numeric', month: 'short', day: 'numeric' };
-            return new Date(dateString).toLocaleDateString('en-US', options);
-        } catch (e) {
-            console.error('Date formatting error:', e);
-            return 'Invalid date';
-        }
     }
 
     function showAlert(message, type) {
