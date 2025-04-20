@@ -1,154 +1,97 @@
-// dashboard.js completo atualizado
+// dashboard.js atualizado
 document.addEventListener('DOMContentLoaded', function() {
-    const REQUEST_LIMIT_PER_DAY = 1000;
-    
-    // Função para verificar e corrigir dados
-    function getProjects() {
-        try {
-            const projects = JSON.parse(localStorage.getItem('shadowGateProjects4')) || [];
-            if (!Array.isArray(projects)) throw new Error('Dados inválidos');
-            return projects.filter(p => p && p.id);
-        } catch (e) {
-            console.error('Corrigindo dados corrompidos...', e);
-            localStorage.setItem('shadowGateProjects4', JSON.stringify([]));
-            return [];
-        }
-    }
+    const supabaseUrl = 'https://nwoswxbtlquiekyangbs.supabase.co';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53b3N3eGJ0bHF1aWVreWFuZ2JzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDQ3ODEwMjcsImV4cCI6MjA2MDM1NzAyN30.KarBv9AopQpldzGPamlj3zu9eScKltKKHH2JJblpoCE';
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Obter ID do projeto da URL
-    function getProjectIdFromUrl() {
+    const getProjectIdFromUrl = () => {
         const params = new URLSearchParams(window.location.search);
-        const projectId = params.get('project');
-        return projectId;
-    }
+        return params.get('project');
+    };
 
-    // Carregar projeto específico
-    function loadProject(projectId) {
-        if (!projectId) {
-            console.error('Nenhum ID de projeto fornecido');
+    // Carregar projeto do Supabase
+    const loadProject = async (projectId) => {
+        try {
+            const { data, error } = await supabase
+                .from('project_requests')
+                .select('*')
+                .eq('project_id', projectId)
+                .single();
+
+            if (error) throw error;
+            return data;
+        } catch (error) {
+            console.error('Erro ao carregar projeto:', error);
+            showAlert('Erro ao carregar dados do projeto', 'danger');
             return null;
         }
-
-        const projects = getProjects();
-        const project = projects.find(p => p.id === projectId);
-        return project;
-    }
-
-    const projectId = getProjectIdFromUrl();
-    const project = loadProject(projectId);
-    
-    if (!project) {
-        showAlert('Projeto não encontrado! Redirecionando...', 'danger');
-        setTimeout(() => window.location.href = 'home.html', 2000);
-        return;
-    }
-
-    // Inicializa dailyRequests se não existir
-    if (!project.dailyRequests) {
-        project.dailyRequests = {};
-        saveProject(project);
-    }
+    };
 
     // Atualizar UI
-    updateProjectUI(project);
-    setupTabs();
-    setupCopyButtons();
-    setupTimeframeButtons();
-
-    // Configurar botão de voltar
-    document.getElementById('backButton').addEventListener('click', function() {
-        window.location.href = 'home.html';
-    });
-
-    // Listener para mensagens do Service Worker
-    navigator.serviceWorker.addEventListener('message', event => {
-        if (event.data.type === 'UPDATE_PROJECTS') {
-            const updatedProject = event.data.payload.find(p => p.id === projectId);
-            if (updatedProject) {
-                updateProjectUI(updatedProject);
-            }
-        }
-    });
-
-    // Função para salvar projeto
-    function saveProject(project) {
-        const projects = getProjects();
-        const index = projects.findIndex(p => p.id === project.id);
-        if (index >= 0) {
-            projects[index] = project;
-        } else {
-            projects.push(project);
-        }
-        localStorage.setItem('shadowGateProjects4', JSON.stringify(projects));
-    }
-
-    // Atualizar UI do projeto
-    function updateProjectUI(project) {
+    const updateProjectUI = async (project) => {
         if (!project) return;
 
         // Informações básicas
-        document.querySelectorAll('#snippetProjectId, #snippetProjectId2').forEach(el => {
-            el.textContent = project.id || 'N/A';
-        });
-
         document.getElementById('gateName').textContent = project.name || 'Sem nome';
         document.getElementById('gateId').textContent = project.id || 'N/A';
-        document.getElementById('gateCreated').textContent = project.createdAt ? formatDate(project.createdAt) : 'Data desconhecida';
-        document.getElementById('apiEndpoint').textContent = `${window.location.origin}/api/${project.id || 'N/A'}`;
-        document.getElementById('spreadsheetUrl').textContent = project.url || 'Sem URL';
+        document.getElementById('dailyRequests').textContent = project.requests_today || 0;
         document.getElementById('gateLevel').textContent = project.level || 1;
 
-        // Atualizações dos sistemas
-        updateDailyRequests(project);
-        updateLevelProgress(project);
-        updateGateStatus(project);
-        initOrUpdateChart(project);
+        // Atualizar endpoint de animes
         updateAnimeEndpoint(project);
-    }
+        
+        // Atualizar gráfico
+        initOrUpdateChart(project);
+        
+        // Atualizar progresso
+        updateLevelProgress(project);
+    };
 
-    // Sistema de requests diários
-    function updateDailyRequests(project) {
-        const today = new Date().toISOString().split('T')[0];
-        const requestsToday = project.dailyRequests[today] || 0;
-        
-        // Atualiza o contador
-        document.getElementById('dailyRequests').textContent = requestsToday;
-        
-        // Atualiza a barra de progresso
-        const progressPercentage = Math.min(100, (requestsToday / REQUEST_LIMIT_PER_DAY) * 100);
-        const progressBar = document.querySelector('.gate-card:nth-child(2) .h-1.bg-blue-500');
-        if (progressBar) {
-            progressBar.style.width = `${progressPercentage}%`;
-            
-            // Muda para vermelho se atingir o limite
-            if (requestsToday >= REQUEST_LIMIT_PER_DAY) {
-                progressBar.classList.replace('bg-blue-500', 'bg-red-500');
-            } else {
-                progressBar.classList.replace('bg-red-500', 'bg-blue-500');
-            }
+    // Endpoint de animes
+    const updateAnimeEndpoint = (project) => {
+        const container = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-2.gap-4.mb-6');
+        if (!container) return;
+
+        let endpointCard = document.getElementById('animeEndpointCard');
+        if (!endpointCard) {
+            endpointCard = document.createElement('div');
+            endpointCard.id = 'animeEndpointCard';
+            endpointCard.className = 'gate-card p-4';
+            container.appendChild(endpointCard);
         }
-    }
+
+        endpointCard.innerHTML = `
+            <h3 class="text-sm font-medium text-gray-300 mb-2 tracking-wider flex items-center">
+                <i class="bi bi-code-slash text-blue-400 mr-2"></i> ANIME API ENDPOINT
+            </h3>
+            <div class="flex items-center justify-between bg-gray-800 p-3 rounded border border-gray-700">
+                <span class="text-xs text-white truncate font-mono">
+                    ${window.location.origin}/${project.id}/animes
+                </span>
+                <button class="copy-button p-1 text-gray-400 hover:text-blue-400 transition">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">Access this URL for anime data in JSON format</p>
+        `;
+    };
 
     // Sistema de gráfico
-    function generateChartData(project, days = 7) {
-        const dailyRequests = project.dailyRequests || {};
-        const dates = [];
-        
-        // Gera os dias solicitados
-        for (let i = days - 1; i >= 0; i--) {
-            const date = new Date();
-            date.setDate(date.getDate() - i);
-            dates.push(date.toISOString().split('T')[0]);
-        }
-        
+    const generateChartData = (project) => {
+        if (!project.daily_requests) return null;
+
+        const dates = Object.keys(project.daily_requests).sort();
+        const last7Days = dates.slice(-7);
+
         return {
-            labels: dates.map(date => {
-                const d = new Date(date);
-                return `${d.getDate()}/${d.getMonth() + 1}`;
+            labels: last7Days.map(date => {
+                const [year, month, day] = date.split('-');
+                return `${day}/${month}`;
             }),
             datasets: [{
                 label: 'Requests',
-                data: dates.map(date => dailyRequests[date] || 0),
+                data: last7Days.map(date => project.daily_requests[date]),
                 backgroundColor: 'rgba(58, 107, 255, 0.2)',
                 borderColor: 'rgba(58, 107, 255, 1)',
                 borderWidth: 2,
@@ -156,223 +99,132 @@ document.addEventListener('DOMContentLoaded', function() {
                 fill: true
             }]
         };
-    }
+    };
 
-    function initOrUpdateChart(project) {
-        const ctx = document.getElementById('usageChart').getContext('2d');
+    const initOrUpdateChart = (project) => {
+        const ctx = document.getElementById('usageChart')?.getContext('2d');
+        if (!ctx) return;
+
         const chartData = generateChartData(project);
-        
+        if (!chartData) return;
+
         if (window.usageChart) {
-            window.usageChart.data.labels = chartData.labels;
-            window.usageChart.data.datasets[0].data = chartData.datasets[0].data;
-            window.usageChart.update();
-        } else {
-            window.usageChart = new Chart(ctx, {
-                type: 'line',
-                data: chartData,
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            backgroundColor: '#1E293B',
-                            titleColor: '#E2E8F0',
-                            bodyColor: '#CBD5E1',
-                            borderColor: '#334155',
-                            borderWidth: 1,
-                            padding: 12,
-                            usePointStyle: true
-                        }
+            window.usageChart.destroy();
+        }
+
+        window.usageChart = new Chart(ctx, {
+            type: 'line',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1E293B',
+                        titleColor: '#E2E8F0',
+                        bodyColor: '#CBD5E1',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        padding: 12,
+                        usePointStyle: true
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        ticks: { color: '#94a3b8' }
                     },
-                    scales: {
-                        x: {
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                            ticks: { color: '#94a3b8' }
-                        },
-                        y: {
-                            beginAtZero: true,
-                            grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                            ticks: { color: '#94a3b8' }
-                        }
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        ticks: { color: '#94a3b8' }
                     }
                 }
-            });
-        }
-    }
-
-    function updateChartTimeframe(days) {
-        const project = loadProject(projectId);
-        if (!project) return;
-        
-        if (window.usageChart) {
-            const chartData = generateChartData(project, days);
-            window.usageChart.data.labels = chartData.labels;
-            window.usageChart.data.datasets[0].data = chartData.datasets[0].data;
-            window.usageChart.update();
-        }
-    }
-
-    // Função para simular request (para teste)
-    function simulateRequest() {
-        const project = loadProject(projectId);
-        if (!project) return;
-        
-        const today = new Date().toISOString().split('T')[0];
-        
-        // Inicializa dailyRequests se não existir
-        if (!project.dailyRequests) {
-            project.dailyRequests = {};
-        }
-        
-        // Atualiza os contadores
-        project.requestsToday = (project.requestsToday || 0) + 1;
-        project.totalRequests = (project.totalRequests || 0) + 1;
-        project.dailyRequests[today] = (project.dailyRequests[today] || 0) + 1;
-        
-        // Verifica level up
-        const currentLevel = project.level || 1;
-        if (project.totalRequests >= currentLevel * 100) {
-            project.level = currentLevel + 1;
-            showAlert(`Gate leveled up to level ${currentLevel + 1}!`, 'success');
-        }
-        
-        // Salva e atualiza a UI
-        saveProject(project);
-        updateProjectUI(project);
-    }
-
-    // Configurar botões de timeframe
-    function setupTimeframeButtons() {
-        document.querySelectorAll('.timeframe-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.timeframe-btn').forEach(b => {
-                    b.classList.remove('active', 'text-white');
-                    b.classList.add('text-gray-400');
-                });
-                this.classList.add('active', 'text-white');
-                this.classList.remove('text-gray-400');
-                
-                updateChartTimeframe(parseInt(this.getAttribute('data-days')));
-            });
+            }
         });
-    }
+    };
 
-    // Funções auxiliares existentes (mantidas iguais)
-    function updateLevelProgress(project) {
+    // Atualizar progresso do nível
+    const updateLevelProgress = (project) => {
         const currentLevel = project.level || 1;
         const requestsNeeded = currentLevel * 100;
-        const progress = ((project.totalRequests || 0) % 100) / 100 * 100;
+        const progress = ((project.total_requests || 0) % 100) / 100 * 100;
         
-        document.getElementById('levelProgressBar').style.width = `${progress}%`;
-        document.getElementById('requestsToNextLevel').textContent = 
-            Math.max(0, requestsNeeded - (project.totalRequests || 0));
-    }
-
-    function updateGateStatus(project) {
-        const statusElement = document.getElementById('gateStatus');
-        const status = project.status || 'active';
-        
-        if (status === 'active') {
-            statusElement.innerHTML = '<i class="bi bi-check-circle-fill mr-2"></i> ACTIVE';
-            statusElement.className = 'text-xl font-bold text-green-400 flex items-center';
-        } else {
-            statusElement.innerHTML = '<i class="bi bi-exclamation-circle-fill mr-2"></i> INACTIVE';
-            statusElement.className = 'text-xl font-bold text-yellow-400 flex items-center';
-        }
-    }
-
-    function updateAnimeEndpoint(project) {
-        const container = document.querySelector('.grid.grid-cols-1.md\\:grid-cols-2.gap-4.mb-6');
-        let endpointCard = document.getElementById('animeEndpointCard');
-        
-        if (!endpointCard) {
-            endpointCard = document.createElement('div');
-            endpointCard.id = 'animeEndpointCard';
-            endpointCard.className = 'gate-card p-4';
-            container.appendChild(endpointCard);
+        if (document.getElementById('levelProgressBar')) {
+            document.getElementById('levelProgressBar').style.width = `${progress}%`;
         }
         
-        endpointCard.innerHTML = `
-            <h3 class="text-sm font-medium text-gray-300 mb-2 tracking-wider flex items-center">
-                <i class="bi bi-code-slash text-blue-400 mr-2"></i> ANIME API ENDPOINT
-            </h3>
-            <div class="flex items-center justify-between bg-gray-800 p-3 rounded border border-gray-700">
-                <span id="animeEndpoint" class="text-xs text-white truncate font-mono">${window.location.origin}/${project.id}/animes</span>
-                <button class="copy-button p-1 text-gray-400 hover:text-blue-400 transition">
-                    <i class="bi bi-clipboard"></i>
-                </button>
-            </div>
-            <p class="text-xs text-gray-500 mt-2">Access this URL for anime data in JSON format</p>
-        `;
-    }
+        if (document.getElementById('requestsToNextLevel')) {
+            document.getElementById('requestsToNextLevel').textContent = 
+                Math.max(0, requestsNeeded - (project.total_requests || 0));
+        }
+    };
 
-    function setupTabs() {
-        const tabLinks = document.querySelectorAll('.tab-link');
-        
-        tabLinks.forEach(link => {
+    // Inicialização
+    const init = async () => {
+        const projectId = getProjectIdFromUrl();
+        if (!projectId) {
+            showAlert('ID do projeto inválido', 'danger');
+            return;
+        }
+
+        const project = await loadProject(projectId);
+        if (!project) {
+            showAlert('Projeto não encontrado', 'danger');
+            setTimeout(() => window.location.href = 'home.html', 2000);
+            return;
+        }
+
+        updateProjectUI(project);
+        setupTabs();
+        setupCopyButtons();
+    };
+
+    // Configurações iniciais
+    const setupTabs = () => {
+        document.querySelectorAll('.tab-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                
-                tabLinks.forEach(tab => {
+                document.querySelectorAll('.tab-link').forEach(tab => {
                     tab.classList.remove('border-blue-400', 'text-blue-400');
                     tab.classList.add('border-transparent', 'text-gray-400');
                 });
-                
                 this.classList.add('border-blue-400', 'text-blue-400');
-                this.classList.remove('border-transparent', 'text-gray-400');
-                
-                const tabId = this.getAttribute('data-tab');
                 document.querySelectorAll('.tab-content').forEach(content => {
                     content.classList.remove('active');
                 });
-                document.getElementById(tabId).classList.add('active');
+                document.getElementById(this.dataset.tab).classList.add('active');
             });
         });
-    }
+    };
 
-    function setupCopyButtons() {
-        document.querySelectorAll('.copy-button').forEach(button => {
-            button.addEventListener('click', function() {
-                const text = this.previousElementSibling.textContent;
-                navigator.clipboard.writeText(text).then(() => {
-                    const icon = this.innerHTML;
-                    this.innerHTML = '<i class="bi bi-check2 text-green-400"></i>';
-                    setTimeout(() => {
-                        this.innerHTML = icon;
-                    }, 2000);
-                });
-            });
+    const setupCopyButtons = () => {
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('.copy-button')) {
+                const text = e.target.closest('.copy-button').previousElementSibling?.textContent;
+                if (text) {
+                    navigator.clipboard.writeText(text);
+                    showAlert('Copied to clipboard!', 'success');
+                }
+            }
         });
-    }
+    };
 
-    function formatDate(dateString) {
-        try {
-            const options = { year: 'numeric', month: 'short', day: 'numeric' };
-            return new Date(dateString).toLocaleDateString('en-US', options);
-        } catch (e) {
-            console.error('Erro ao formatar data:', e);
-            return 'Data inválida';
-        }
-    }
-
-    function showAlert(message, type) {
+    const showAlert = (message, type) => {
         const alert = document.createElement('div');
         alert.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg text-white font-semibold tracking-wider z-50 ${
             type === 'success' ? 'bg-green-600' : 
-            type === 'danger' ? 'bg-red-600' :
-            type === 'warning' ? 'bg-yellow-600' :
-            'bg-blue-600'
+            type === 'danger' ? 'bg-red-600' : 'bg-blue-600'
         }`;
         alert.textContent = message;
         document.body.appendChild(alert);
-        
-        setTimeout(() => {
-            alert.classList.add('opacity-0', 'transition-opacity', 'duration-500');
-            setTimeout(() => alert.remove(), 500);
-        }, 3000);
-    }
 
-    // Expor simulateRequest para o HTML
-    window.simulateRequest = simulateRequest;
+        setTimeout(() => {
+            alert.remove();
+        }, 3000);
+    };
+
+    // Iniciar
+    init();
 });
